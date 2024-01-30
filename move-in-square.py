@@ -28,8 +28,8 @@ try:
     BP.set_motor_limits(motor_left, 50, 200)
     BP.set_motor_limits(motor_right, 50, 200)
 
-    forward_distance = 693
-    turning_distance = 190
+    forward_distance = 680
+    turning_distance = 172
 
     for _ in range(4):  # Repeat 4 times for each side of the square
         # Reset encoder values for motors A and D
