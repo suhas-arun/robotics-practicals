@@ -11,9 +11,9 @@ BP = brickpi3.BrickPi3()
 motor_left = BP.PORT_D
 motor_right = BP.PORT_A
 
-sonar = BP.PORT_4
+# sonar = BP.PORT_4
 
-BP.set_sensor_type(sonar, BP.SENSOR_TYPE.NXT_ULTRASONIC)
+BP.set_sensor_type(BP.PORT_1, BP.SENSOR_TYPE.NXT_ULTRASONIC)
 
 BP.set_motor_position_kp(motor_left, 30)
 BP.set_motor_position_kd(motor_left, 150)
@@ -24,23 +24,29 @@ BP.set_motor_position_kd(motor_right, 150)
 BP.set_motor_limits(motor_left, 50, 200)
 BP.set_motor_limits(motor_right, 50, 200)
 
-NUMBER_OF_PARTICLES = 100
-OFFSET_Y = 768
-
 TURNING_FACTOR = 117 # How much to turn to rotate 1 radian
 MOVING_FACTOR = 17 # How much to move forward 1 cm
 STEP_SIZE = 20 * MOVING_FACTOR
 
 MAP_SIZE = 210 # Size in cm of map
-MARGIN = 0.05 * MAP_SIZE
-SCALE = OFFSET_Y / (MAP_SIZE + 2 * MARGIN)
+CANVAS_SIZE = 768 # Size in pixels of canvas display
+MARGIN = 0.05 * CANVAS_SIZE
 
-particles = [(0, OFFSET_Y, 0, 1 / NUMBER_OF_PARTICLES) for _ in range(NUMBER_OF_PARTICLES)]
+NUMBER_OF_PARTICLES = 100
+OFFSET_Y = MAP_SIZE * MOVING_FACTOR
+
+SCALE = CANVAS_SIZE / OFFSET_Y
+
+# Initial position
+INIT_X = 20
+INIT_Y = 20
+
+particles = [(INIT_X, OFFSET_Y - INIT_Y, 0, 1 / NUMBER_OF_PARTICLES) for _ in range(NUMBER_OF_PARTICLES)]
 
 def draw_particles(data):
-    display = [
-        ((p[0] + MARGIN) * SCALE, (MAP_SIZE + MARGIN - p[1]) * SCALE) + p[2:] for p in data]
-    print("drawParticles:" + str(display))
+    particles = [
+        (p[0] * SCALE + MARGIN, p[1] * SCALE - MARGIN, p[2], p[3]) for p in data]
+    print("drawParticles:" + str(particles))
 
 def get_left_pos():
     return BP.get_motor_encoder(motor_left)
@@ -100,23 +106,23 @@ def update_particles_after_rotation(particles, angle):
 
     return particles
 
-def get_particle_x():
-    return sum([p[0] * p[3] for p in particles]) / NUMBER_OF_PARTICLES
+def get_particle_x(particles):
+    return sum([p[0] * p[3] for p in particles])
 
-def get_particle_y():
-    return sum([p[1] * p[3] for p in particles]) / NUMBER_OF_PARTICLES
+def get_particle_y(particles):
+    return sum([p[1] * p[3] for p in particles])
 
-def get_particle_theta():
-    theta = sum([p[2] * p[3] for p in particles]) / NUMBER_OF_PARTICLES
+def get_particle_theta(particles):
+    theta = sum([p[2] * p[3] for p in particles])
     return theta % (2 * math.pi)
 
 def navigate_to_waypoint(Wx, Wy, particles):
-    x = get_particle_x()
-    y = get_particle_y()
-    theta = -get_particle_theta()
-    
+    x = get_particle_x(particles)
+    y = get_particle_y(particles)
+    theta = -get_particle_theta(particles)
+
     dx = (Wx * MOVING_FACTOR) - x
-    dy = (-(OFFSET_Y / MOVING_FACTOR) - Wy) * MOVING_FACTOR + y
+    dy = (-MAP_SIZE - Wy) * MOVING_FACTOR + y
     
     angle = math.atan2(dy, dx)
     d = math.sqrt(dx ** 2 + dy ** 2)
@@ -128,7 +134,7 @@ def navigate_to_waypoint(Wx, Wy, particles):
         beta -= 2 * math.pi
 
     particles = rotate(particles, beta)
-    update()
+    particles = update(particles)
     time.sleep(1)
 
     BP.offset_motor_encoder(motor_left, BP.get_motor_encoder(motor_right))
@@ -137,20 +143,21 @@ def navigate_to_waypoint(Wx, Wy, particles):
     # Move forward in steps of 20cm
     while d > STEP_SIZE:
         particles = forward(particles, STEP_SIZE)
-        update()
+        particles = update(particles)
         d -= STEP_SIZE
         time.sleep(1)
 
     particles = forward(particles, d)
-    update()
+    particles = update(particles)
     return particles
 
-def update():
+def update(particles):
     # Measure z from sonar
-    # z = BP.get_sensor(sonar)
-    z = 10
-    
-    # Update weights based on likelihood    
+    z = read_sensor()
+    #z = 20
+    print(f"Sensor reading: {z}")
+
+    # Update weights based on likelihood
     for i, p in enumerate(particles):
         new_weight = p[3] * calculate_likelihood(p[0], p[1], p[2], z)
         particles[i] = (p[0], p[1], p[2], new_weight)
@@ -161,12 +168,15 @@ def update():
         normalised_weight = p[3] / weight_sum
         particles[i] = (p[0], p[1], p[2], normalised_weight)
 
-    resample()
     draw_particles(particles)
-
-
-def resample():
-    global particles
+    particles = resample(particles)
+    time.sleep(1)
+    draw_particles(particles)
+    time.sleep(1)
+    return particles
+    
+def resample(particles):
+    print("Resampling")
     cum_weights = [0 for _ in range(NUMBER_OF_PARTICLES)]
     for i in range(NUMBER_OF_PARTICLES):
         cum_weights[i] = particles[i][3] + (cum_weights[i - 1] if i > 0 else 0)
@@ -183,12 +193,22 @@ def resample():
             else:
                 index += 1
 
-    particles = new_particles
+    return new_particles
     
+def read_sensor():
+    # time.sleep(0.5)
+    fails = 0 
+    while True:
+        try:
+            value = BP.get_sensor(BP.PORT_1)
+            return value
+        except brickpi3.SensorError as error:
+            fails += 1
+            # print(f"Failed: {fails}")
+            time.sleep(0.02)
+        
 
-while True:
-    # x = float(input("Enter x coordinate: "))
-    # y = float(input("Enter y coordinate: "))
+if __name__ == "__main__":
     waypoints = [(84, 30), (180, 30), (180, 54), (138, 54), (138, 168), (114, 168), (114, 84), (84, 84), (84, 30)]
     for x, y in waypoints:
         print(f"Navigating to ({x}, {y})")
